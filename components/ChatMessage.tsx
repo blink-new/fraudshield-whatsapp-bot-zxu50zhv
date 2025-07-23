@@ -6,22 +6,25 @@ import { Ionicons } from '@expo/vector-icons';
 import { VerificationCard } from './VerificationCard';
 import { PinCard } from './PinCard';
 import { EnhancedVerificationCard } from './EnhancedVerificationCard';
+import DocumentUpload from './DocumentUpload';
+import DocumentValidationResults from './DocumentValidationResults';
 
 interface Message {
   id: string;
   text: string;
   isBot: boolean;
   timestamp: Date;
-  type?: 'text' | 'verification' | 'pin' | 'document' | 'enhanced_verification';
+  type?: 'text' | 'verification' | 'pin' | 'document' | 'enhanced_verification' | 'document_validation' | 'document_upload';
   data?: any;
 }
 
 interface ChatMessageProps {
   message: Message;
   delay?: number;
+  onDocumentProcessed?: (result: any) => void;
 }
 
-export function ChatMessage({ message, delay = 0 }: ChatMessageProps) {
+export function ChatMessage({ message, delay = 0, onDocumentProcessed }: ChatMessageProps) {
   const formatTime = (date: Date) => {
     return date.toLocaleTimeString('en-US', {
       hour: '2-digit',
@@ -43,6 +46,20 @@ export function ChatMessage({ message, delay = 0 }: ChatMessageProps) {
         );
       case 'pin':
         return <PinCard data={message.data} />;
+      case 'document_upload':
+        return (
+          <DocumentUpload
+            onDocumentProcessed={onDocumentProcessed || (() => {})}
+            documentType={message.data?.documentType}
+            placeholder={message.data?.placeholder}
+          />
+        );
+      case 'document_validation':
+        return (
+          <DocumentValidationResults
+            result={message.data}
+          />
+        );
       case 'document':
         return (
           <View style={styles.documentMessage}>

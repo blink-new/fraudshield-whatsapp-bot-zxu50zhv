@@ -24,6 +24,8 @@ import { VerificationCard } from '@/components/VerificationCard';
 import { PinCard } from '@/components/PinCard';
 import { EnhancedVerificationCard } from '@/components/EnhancedVerificationCard';
 import { BankAccountManager } from '@/components/BankAccountManager';
+import DocumentUpload from '@/components/DocumentUpload';
+import DocumentValidationResults from '@/components/DocumentValidationResults';
 import { bankAPI, PaymentVerificationResult, CompanyVerificationResult } from '@/services/BankAPI';
 
 interface Message {
@@ -31,7 +33,7 @@ interface Message {
   text: string;
   isBot: boolean;
   timestamp: Date;
-  type?: 'text' | 'verification' | 'pin' | 'document' | 'enhanced_verification';
+  type?: 'text' | 'verification' | 'pin' | 'document' | 'enhanced_verification' | 'document_validation' | 'document_upload';
   data?: any;
 }
 
@@ -49,13 +51,15 @@ export default function ChatScreen() {
   const [currentFlow, setCurrentFlow] = useState<'none' | 'payment' | 'document' | 'pin'>('none');
   const [showBankManager, setShowBankManager] = useState(false);
   const [isVerifying, setIsVerifying] = useState(false);
+  const [showDocumentResults, setShowDocumentResults] = useState(false);
+  const [documentValidationResult, setDocumentValidationResult] = useState<any>(null);
   const scrollViewRef = useRef<ScrollView>(null);
 
   useEffect(() => {
     scrollViewRef.current?.scrollToEnd({ animated: true });
   }, [messages]);
 
-  const addMessage = (text: string, isBot: boolean = false, type: 'text' | 'verification' | 'pin' | 'document' | 'enhanced_verification' = 'text', data?: any) => {
+  const addMessage = (text: string, isBot: boolean = false, type: 'text' | 'verification' | 'pin' | 'document' | 'enhanced_verification' | 'document_validation' | 'document_upload' = 'text', data?: any) => {
     const newMessage: Message = {
       id: Date.now().toString(),
       text,
@@ -73,6 +77,33 @@ export default function ChatScreen() {
       setIsTyping(false);
       callback();
     }, delay);
+  };
+
+  const handleDocumentProcessed = (result: any) => {
+    setDocumentValidationResult(result);
+    
+    // Add validation result message
+    addMessage('', true, 'document_validation', result);
+    
+    // Add follow-up message based on validation result
+    simulateTyping(() => {
+      if (result.isValid && result.riskScore < 20) {
+        addMessage(`✅ Document verified! Risk score: ${result.riskScore}/100. This appears to be legitimate.`, true);
+      } else if (result.riskScore < 40) {
+        addMessage(`⚠️ Document partially verified. Risk score: ${result.riskScore}/100. Please review the validation details.`, true);
+      } else if (result.riskScore < 70) {
+        addMessage(`🚨 High risk detected! Risk score: ${result.riskScore}/100. Additional verification recommended.`, true);
+      } else {
+        addMessage(`🚨 CRITICAL RISK! Risk score: ${result.riskScore}/100. Do NOT proceed without manual verification.`, true);
+      }
+      
+      // Add specific recommendations
+      if (result.recommendations && result.recommendations.length > 0) {
+        setTimeout(() => {
+          addMessage(`📋 Recommendations:\\n${result.recommendations.slice(0, 3).join('\\n')}`, true);
+        }, 1000);
+      }
+    }, 1500);
   };
 
   const handleSendMessage = () => {
@@ -98,12 +129,26 @@ export default function ChatScreen() {
     if (input === '1' || input.toLowerCase().includes('payment') || input.toLowerCase().includes('pop')) {
       setCurrentFlow('payment');
       simulateTyping(() => {
-        addMessage('✅ Please upload the customer\'s PoP screenshot or forward their payment details here.\n\nYou can also type the payment reference (e.g., "FNB, Ref 483920")', true);
+        addMessage('✅ Please upload the customer\'s PoP screenshot for ML analysis or type the payment reference.\n\nExample: "FNB, Ref 483920"', true);
+        // Add document upload component
+        setTimeout(() => {
+          addMessage('', true, 'document_upload', { 
+            documentType: 'PoP',
+            placeholder: 'Upload PoP document or screenshot'
+          });
+        }, 500);
       });
     } else if (input === '2' || input.toLowerCase().includes('rfq') || input.toLowerCase().includes('po')) {
       setCurrentFlow('document');
       simulateTyping(() => {
-        addMessage('📄 Please upload the RFQ or PO document, or forward the email text.', true);
+        addMessage('📄 Please upload the RFQ or PO document for ML analysis and registry validation.', true);
+        // Add document upload component
+        setTimeout(() => {
+          addMessage('', true, 'document_upload', { 
+            documentType: 'PO',
+            placeholder: 'Upload PO/RFQ document for validation'
+          });
+        }, 500);
       });
     } else if (input === '3' || input.toLowerCase().includes('pin') || input.toLowerCase().includes('driver')) {
       setCurrentFlow('pin');
@@ -310,6 +355,7 @@ export default function ChatScreen() {
             key={message.id}
             message={message}
             delay={index * 100}
+            onDocumentProcessed={handleDocumentProcessed}
           />
         ))}
         {isTyping && <TypingIndicator />}
@@ -368,6 +414,16 @@ export default function ChatScreen() {
           console.log('Account linked:', account);
         }}
       />
+
+      {/* Document Validation Results Modal */}
+      {showDocumentResults && documentValidationResult && (
+        <View style={styles.modalOverlay}>
+          <DocumentValidationResults
+            result={documentValidationResult}
+            onClose={() => setShowDocumentResults(false)}
+          />
+        </View>
+      )}
     </SafeAreaView>
   );
 }
@@ -462,5 +518,16 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     marginLeft: 8,
+  },
+  modalOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 1000,
   },
 });
