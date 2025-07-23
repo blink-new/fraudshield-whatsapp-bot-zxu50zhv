@@ -26,7 +26,11 @@ import { EnhancedVerificationCard } from '@/components/EnhancedVerificationCard'
 import { BankAccountManager } from '@/components/BankAccountManager';
 import DocumentUpload from '@/components/DocumentUpload';
 import DocumentValidationResults from '@/components/DocumentValidationResults';
+import AuthScreen from '@/components/AuthScreen';
+import CompanyProfile from '@/components/CompanyProfile';
+import UserManagement from '@/components/UserManagement';
 import { bankAPI, PaymentVerificationResult, CompanyVerificationResult } from '@/services/BankAPI';
+import { authAPI, type AuthSession } from '@/services/AuthAPI';
 
 interface Message {
   id: string;
@@ -38,14 +42,15 @@ interface Message {
 }
 
 export default function ChatScreen() {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: '1',
-      text: '👋 Hi, welcome to FraudShield.\nI can help you:\n1️⃣ Verify payment (PoP / EFT)\n2️⃣ Check RFQ / PO authenticity\n3️⃣ Get a release PIN for your driver\n\nPlease type 1, 2 or 3 to continue.',
-      isBot: true,
-      timestamp: new Date(),
-    },
-  ]);
+  // Authentication state
+  const [session, setSession] = useState<AuthSession | null>(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  
+  // UI state
+  const [showCompanyProfile, setShowCompanyProfile] = useState(false);
+  const [showUserManagement, setShowUserManagement] = useState(false);
+  
+  const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const [currentFlow, setCurrentFlow] = useState<'none' | 'payment' | 'document' | 'pin'>('none');
@@ -56,8 +61,62 @@ export default function ChatScreen() {
   const scrollViewRef = useRef<ScrollView>(null);
 
   useEffect(() => {
+    // Check if user is already authenticated
+    const currentSession = authAPI.getCurrentSession();
+    if (currentSession) {
+      handleAuthSuccess(currentSession);
+    }
+  }, []);
+
+  useEffect(() => {
     scrollViewRef.current?.scrollToEnd({ animated: true });
   }, [messages]);
+
+  const handleAuthSuccess = (authSession: AuthSession) => {
+    setSession(authSession);
+    setIsAuthenticated(true);
+    
+    // Initialize chat with personalized welcome message
+    const welcomeMessage = `👋 Hi ${authSession.user.firstName}, welcome to FraudShield!
+
+🏢 Company: ${authSession.company.name}
+👤 Role: ${authSession.user.role === 'owner' ? '👑 Owner' : '👤 Staff'}
+
+I can help you:
+1️⃣ Verify payment (PoP / EFT)
+2️⃣ Check RFQ / PO authenticity  
+3️⃣ Get a release PIN for your driver
+
+Please type 1, 2 or 3 to continue.`;
+
+    setMessages([{
+      id: '1',
+      text: welcomeMessage,
+      isBot: true,
+      timestamp: new Date(),
+    }]);
+  };
+
+  const handleLogout = async () => {
+    Alert.alert(
+      'Sign Out',
+      'Are you sure you want to sign out?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Sign Out',
+          style: 'destructive',
+          onPress: async () => {
+            await authAPI.logout();
+            setSession(null);
+            setIsAuthenticated(false);
+            setMessages([]);
+            setCurrentFlow('none');
+          }
+        }
+      ]
+    );
+  };
 
   const addMessage = (text: string, isBot: boolean = false, type: 'text' | 'verification' | 'pin' | 'document' | 'enhanced_verification' | 'document_validation' | 'document_upload' = 'text', data?: any) => {
     const newMessage: Message = {
@@ -100,7 +159,8 @@ export default function ChatScreen() {
       // Add specific recommendations
       if (result.recommendations && result.recommendations.length > 0) {
         setTimeout(() => {
-          addMessage(`📋 Recommendations:\\n${result.recommendations.slice(0, 3).join('\\n')}`, true);
+          addMessage(`📋 Recommendations:
+${result.recommendations.slice(0, 3).join('\n')}`, true);
         }, 1000);
       }
     }, 1500);
@@ -127,9 +187,17 @@ export default function ChatScreen() {
 
   const handleMainMenu = (input: string) => {
     if (input === '1' || input.toLowerCase().includes('payment') || input.toLowerCase().includes('pop')) {
+      // Check permissions
+      if (!authAPI.hasPermission('verify_payments')) {
+        addMessage('❌ You don\'t have permission to verify payments. Please contact your company owner.', true);
+        return;
+      }
+      
       setCurrentFlow('payment');
       simulateTyping(() => {
-        addMessage('✅ Please upload the customer\'s PoP screenshot for ML analysis or type the payment reference.\n\nExample: "FNB, Ref 483920"', true);
+        addMessage(`✅ Please upload the customer's PoP screenshot for ML analysis or type the payment reference.
+
+Example: "FNB, Ref 483920"`, true);
         // Add document upload component
         setTimeout(() => {
           addMessage('', true, 'document_upload', { 
@@ -139,6 +207,12 @@ export default function ChatScreen() {
         }, 500);
       });
     } else if (input === '2' || input.toLowerCase().includes('rfq') || input.toLowerCase().includes('po')) {
+      // Check permissions
+      if (!authAPI.hasPermission('check_documents')) {
+        addMessage('❌ You don\'t have permission to check documents. Please contact your company owner.', true);
+        return;
+      }
+      
       setCurrentFlow('document');
       simulateTyping(() => {
         addMessage('📄 Please upload the RFQ or PO document for ML analysis and registry validation.', true);
@@ -151,13 +225,25 @@ export default function ChatScreen() {
         }, 500);
       });
     } else if (input === '3' || input.toLowerCase().includes('pin') || input.toLowerCase().includes('driver')) {
+      // Check permissions
+      if (!authAPI.hasPermission('generate_pins')) {
+        addMessage('❌ You don\'t have permission to generate PINs. Please contact your company owner.', true);
+        return;
+      }
+      
       setCurrentFlow('pin');
       simulateTyping(() => {
-        addMessage('🚚 Please enter customer name and order amount.\n\nExample: "ABC Foods, R12,500"', true);
+        addMessage(`🚚 Please enter customer name and order amount.
+
+Example: "ABC Foods, R12,500"`, true);
       });
     } else {
       simulateTyping(() => {
-        addMessage('Please select an option by typing 1, 2, or 3:\n\n1️⃣ Verify payment (PoP / EFT)\n2️⃣ Check RFQ / PO authenticity\n3️⃣ Get a release PIN for your driver', true);
+        addMessage(`Please select an option by typing 1, 2, or 3:
+
+1️⃣ Verify payment (PoP / EFT)
+2️⃣ Check RFQ / PO authenticity
+3️⃣ Get a release PIN for your driver`, true);
       });
     }
   };
@@ -166,7 +252,8 @@ export default function ChatScreen() {
     setIsVerifying(true);
     
     simulateTyping(() => {
-      addMessage('🔎 Connecting to bank API…\n🕒 Verifying payment details…', true);
+      addMessage(`🔎 Connecting to bank API…
+🕒 Verifying payment details…`, true);
     }, 500);
 
     try {
@@ -203,7 +290,8 @@ export default function ChatScreen() {
     setIsVerifying(true);
     
     simulateTyping(() => {
-      addMessage('🔎 Analyzing company details…\n🕒 Checking business registration and domain…', true);
+      addMessage(`🔎 Analyzing company details…
+🕒 Checking business registration and domain…`, true);
     }, 500);
 
     try {
@@ -244,7 +332,7 @@ export default function ChatScreen() {
 
     simulateTyping(() => {
       // Extract amount from input (simplified parsing)
-      const amountMatch = input.match(/R?(\d+[,.]?\d*)/);
+      const amountMatch = input.match(/R?(\\d+[,.]?\\d*)/);
       const amount = amountMatch ? `R${amountMatch[1]}` : 'R12,500';
       
       addMessage(`✅ Payment verified for ${amount}.`, true);
@@ -254,7 +342,7 @@ export default function ChatScreen() {
       const pin = bankAPI.generateSecurePIN();
       addMessage('', true, 'pin', { 
         pin,
-        amount: input.match(/R?(\d+[,.]?\d*)/) ? `R${input.match(/R?(\d+[,.]?\d*)/)?.[1]}` : 'R12,500',
+        amount: input.match(/R?(\\d+[,.]?\\d*)/) ? `R${input.match(/R?(\\d+[,.]?\\d*)/)?.[1]}` : 'R12,500',
         customer: input.split(',')[0] || 'Customer'
       });
     }, 2500);
@@ -312,9 +400,23 @@ export default function ChatScreen() {
   const resetChat = () => {
     setCurrentFlow('none');
     simulateTyping(() => {
-      addMessage('👋 Hi, welcome to FraudShield.\nI can help you:\n1️⃣ Verify payment (PoP / EFT)\n2️⃣ Check RFQ / PO authenticity\n3️⃣ Get a release PIN for your driver\n\nPlease type 1, 2 or 3 to continue.', true);
+      const welcomeMessage = `👋 Hi ${session?.user.firstName}, welcome back to FraudShield!
+
+I can help you:
+1️⃣ Verify payment (PoP / EFT)
+2️⃣ Check RFQ / PO authenticity
+3️⃣ Get a release PIN for your driver
+
+Please type 1, 2 or 3 to continue.`;
+      
+      addMessage(welcomeMessage, true);
     });
   };
+
+  // Show authentication screen if not authenticated
+  if (!isAuthenticated) {
+    return <AuthScreen onAuthSuccess={handleAuthSuccess} />;
+  }
 
   return (
     <SafeAreaView style={styles.container}>
@@ -329,15 +431,28 @@ export default function ChatScreen() {
             </View>
             <View>
               <Text style={styles.botName}>FraudShield Bot</Text>
-              <Text style={styles.botStatus}>Online</Text>
+              <Text style={styles.botStatus}>
+                {session?.company.name} • {session?.user.role === 'owner' ? '👑 Owner' : '👤 Staff'}
+              </Text>
             </View>
           </View>
           <View style={styles.headerActions}>
+            {session?.user.role === 'owner' && (
+              <TouchableOpacity onPress={() => setShowUserManagement(true)} style={styles.headerButton}>
+                <Ionicons name="people" size={24} color="#FFFFFF" />
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity onPress={() => setShowCompanyProfile(true)} style={styles.headerButton}>
+              <Ionicons name="business" size={24} color="#FFFFFF" />
+            </TouchableOpacity>
             <TouchableOpacity onPress={() => setShowBankManager(true)} style={styles.headerButton}>
               <Ionicons name="card" size={24} color="#FFFFFF" />
             </TouchableOpacity>
             <TouchableOpacity onPress={resetChat} style={styles.headerButton}>
               <Ionicons name="refresh" size={24} color="#FFFFFF" />
+            </TouchableOpacity>
+            <TouchableOpacity onPress={handleLogout} style={styles.headerButton}>
+              <Ionicons name="log-out" size={24} color="#FFFFFF" />
             </TouchableOpacity>
           </View>
         </View>
@@ -406,6 +521,19 @@ export default function ChatScreen() {
         </View>
       </KeyboardAvoidingView>
 
+      {/* Company Profile */}
+      {showCompanyProfile && (
+        <CompanyProfile onClose={() => setShowCompanyProfile(false)} />
+      )}
+
+      {/* User Management */}
+      {showUserManagement && (
+        <UserManagement
+          visible={showUserManagement}
+          onClose={() => setShowUserManagement(false)}
+        />
+      )}
+
       {/* Bank Account Manager */}
       <BankAccountManager
         visible={showBankManager}
@@ -451,6 +579,7 @@ const styles = StyleSheet.create({
   botInfo: {
     flexDirection: 'row',
     alignItems: 'center',
+    flex: 1,
   },
   avatar: {
     width: 40,
@@ -467,7 +596,7 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
   },
   botStatus: {
-    fontSize: 14,
+    fontSize: 12,
     color: '#B8E6D1',
   },
   headerActions: {
@@ -476,7 +605,7 @@ const styles = StyleSheet.create({
   },
   headerButton: {
     padding: 8,
-    marginLeft: 8,
+    marginLeft: 4,
   },
   messagesContainer: {
     flex: 1,
